@@ -9,18 +9,18 @@ This tool renames the file name on the shooting date of the meta information inc
 
 The following modules are required.
 
-  File::Copy 'move'
-  Getopt::Long 'GetOptions'
-  Image::ExifTool
+    File::Copy 'move'
+    Getopt::Long 'GetOptions'
+    Image::ExifTool
 
 ## Usage
 
-  rename_by_meta.pl [OPTIONS] <directory>
-
-  OPTIONS:
-    -h, --help         : this message.
-    -d, --dry-run      : print result, but not execute rename.
-    -y, --yes          : always yes.
+  rename_by_meta.pl [OPTIONS] <directory> 
+ 
+    OPTIONS: 
+      -h, --help         : this message. 
+      -d, --dry-run      : print result, but not execute rename. 
+      -y, --yes          : always yes. 
 
 ## Installation
 
