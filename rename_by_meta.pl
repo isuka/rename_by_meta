@@ -305,7 +305,7 @@ sub display_rename
 
     $path_len *= -1; # 左寄せのため負数にする
     $from_len *= -1; # 左寄せのため負数にする
-    print("---- RENAME FILES $path_len, $from_len----\n");
+    print("---- RENAME FILES ----\n");
     printf("%*s  %*s  %s\n", $path_len, 'PATH', $from_len, 'FROM', 'TO');
     &display_rename_files($stack, $path_len, $from_len);
     print("\n");
