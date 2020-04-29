@@ -7,8 +7,25 @@ use warnings;
 use File::Copy 'move';
 use Getopt::Long 'GetOptions';
 use Image::ExifTool;
+use Text::CharWidth 'mbswidth';
 
-#use Data::Dumper::AutoEncode;
+use Data::Dumper::AutoEncode;
+
+# OBJECTS
+#   %path_stack {
+#     'type' => 'directory'
+#     'path' => folder path list
+#     'item' => file or directory list
+#                 file      : file object
+#                 directory : path stack
+#   }
+#
+#   %file_object {
+#     'type' => 'file'
+#     'extention' => file extention: jpg, mp4, m4v, or mov
+#     'file_from' => original file name
+#     'file_to' => rename file name
+#   }
 
 exit &main();
 
@@ -34,13 +51,13 @@ sub main
         }
 
         # 引数で指定されたディレクトリ配下のファイルパス取得
-        my $files = &get_files($path);
+        my $stack = &get_files($path);
 
         # ファイルタイプとプロパティチェック
-        my $obj = &check_files($files);
+        &check_items($stack);
 
         # リネーム予定を表示
-        &display_rename($obj);
+        &display_rename($stack);
 
         # ファイルごとにリネーム処理
         if ($dry_run) {
@@ -56,7 +73,7 @@ sub main
                     return 0;
                 }
             }
-            &rename_files($obj);
+            &rename_files($stack);
         }
     }
 
@@ -102,24 +119,52 @@ sub get_files
     $path =~ s/\/$//; # remove notation fluctuation
 
     my $glob_path = $path;
-    $glob_path =~ s/ /\\ /g;
+    $glob_path =~ s/(\s)/\\$1/g;
     my @list = glob "$glob_path/*";
 
-    my @files;
+    my @item;
+    my $path_stack = {
+        'type' => 'directory',
+        'path' => &path2array($path),
+        'item' => \@item,
+        };
     foreach (@list) {
-        my $obj;
-        $obj->{'path'} = $path;
         if (-d $_) {
-            my $ref = &get_files($_);
-            push(@files, @$ref);
+            push(@item, &get_files($_));
         } else {
+            my $file_obj = {
+                'type' => 'file',
+            };
             $_ =~ s/\Q$path\E\///;
-            $obj->{'file_from'} = $_;
-            push(@files, $obj);
+            $file_obj->{'file_from'} = $_;
+            push(@item, $file_obj);
         }
     }
 
-    return \@files;
+    return $path_stack;
+}
+
+################################################################################
+# path(str) to array reference
+#
+#   INPUT  : path
+#   OUTPUT : directory list reference
+sub path2array
+{
+    my $path = shift;
+    my @split = split(/\//, $path);
+    return \@split;
+}
+
+################################################################################
+# array reference to path(str)
+#
+#   INPUT  : directory list reference
+#   OUTPUT : path
+sub array2path
+{
+    my $array = shift;
+    return join('/', @$array);
 }
 
 ################################################################################
@@ -127,31 +172,38 @@ sub get_files
 #
 #   INPUT  : files(ref)
 #   OUTPUT : file object
-sub check_files
+sub check_items
 {
-    my $files = shift;
-    my $obj;
+    my $stack = shift;
+    my $items = $stack->{'item'};
+    my $path = &array2path($stack->{'path'});
 
-    foreach my $file (@$files) {
-        $file->{'file_to'} = undef;
+    foreach my $item (@$items) {
+        if ($item->{'type'} eq 'directory') {
+            &check_items($item);
+            next;
+        } elsif ($item->{'type'} ne 'file') {
+            die "[ERROR] undefined stack type. : " . $item->{'type'};
+        }
+
+        $item->{'file_to'} = undef;
         # ファイルの拡張子チェック
-        if ($file->{'file_from'} =~ /\.jp[e]*g$/i) {
-            $file->{'type'} = 'jpg';
-        } elsif ($file->{'file_from'} =~ /\.mp4$/i) {
-            $file->{'type'} = 'mp4';
-        } elsif ($file->{'file_from'} =~ /\.m4v$/i) {
-            $file->{'type'} = 'm4v';
-        } elsif ($file->{'file_from'} =~ /\.mov$/i) {
-            $file->{'type'} = 'mov';
+        if ($item->{'file_from'} =~ /\.jp[e]*g$/i) {
+            $item->{'extention'} = 'jpg';
+        } elsif ($item->{'file_from'} =~ /\.mp4$/i) {
+            $item->{'extention'} = 'mp4';
+        } elsif ($item->{'file_from'} =~ /\.m4v$/i) {
+            $item->{'extention'} = 'm4v';
+        } elsif ($item->{'file_from'} =~ /\.mov$/i) {
+            $item->{'extention'} = 'mov';
         } else {
-            $file->{'type'} = undef;
+            $item->{'extention'} = undef;
             next;
         }
-        &make_file_name($file);
-        push(@$obj, $file);
+        &make_file_name($item, $path);
     }
 
-    return $obj;
+    return;
 }
 
 ################################################################################
@@ -163,11 +215,12 @@ sub check_files
 sub make_file_name
 {
     my $obj = shift;
+    my $path = shift;
     $obj->{'file_to'} = undef;
-    my $file = $obj->{'path'} . '/' . $obj->{'file_from'};
+    my $file = $path . '/' . $obj->{'file_from'};
 
-    if (!defined($obj->{'type'})) {
-        die "[ERROR] file type is undefined. : " . $file;
+    if (!defined($obj->{'extention'})) {
+        die "[ERROR] file extention is undefined. : " . $file;
     }
 
     my $exif = &get_exif($file);
@@ -243,42 +296,121 @@ sub mcd2fname
 #   OUTPUT : -
 sub display_rename
 {
-    my $obj = shift;
+    my $stack = shift;
+    my $obj; # DEBUG
 
     # fromの最長文字列を調査
-    my $path_len = 0;
-    my $from_len = 0;
-    foreach my $file (@$obj) {
-        my $len = length($file->{'file_from'});
-        if ($len > $from_len) { $from_len = $len; }
-        $len = length($file->{'path'});
-        if ($len > $path_len) { $path_len = $len; }
-    }
+    my $path_len = &get_max_path_len($stack);
+    my $from_len = &get_max_from_len($stack);
 
-    $path_len *= -1;
-    $from_len *= -1;
-    print("---- RENAME FILES ----\n");
+    $path_len *= -1; # 左寄せのため負数にする
+    $from_len *= -1; # 左寄せのため負数にする
+    print("---- RENAME FILES $path_len, $from_len----\n");
     printf("%*s  %*s  %s\n", $path_len, 'PATH', $from_len, 'FROM', 'TO');
-    foreach my $file (@$obj) {
-        if (!defined($file->{'file_to'})) { next; }
-        printf("%*s  %*s  %s.%s\n",
-               $path_len, $file->{'path'},
-               $from_len, $file->{'file_from'},
-               $file->{'file_to'}, $file->{'type'});
-    }
+    &display_rename_files($stack, $path_len, $from_len);
     print("\n");
 
     print("---- NOT RENAME FILES ----\n");
     printf("%*s  %*s\n", $path_len, 'PATH', $from_len, 'FROM');
-    foreach my $file (@$obj) {
-        if (defined($file->{'file_to'})) { next; }
-        printf("%*s  %*s\n",
-               $path_len, $file->{'path'},
-               $from_len, $file->{'file_from'});
-    }
+    &display_not_rename_files($stack, $path_len, $from_len);
     print("\n");
 
     return;
+}
+
+################################################################################
+# get max path character length
+#
+#   INPUT  : files(ref)
+#   OUTPUT : character count
+sub get_max_path_len
+{
+    my $stack = shift;
+    my $items = $stack->{'item'};
+    my $max_len = 0;
+
+    foreach my $item (@$items) {
+        if ($item->{'type'} eq 'directory') {
+            my $path = &array2path($item->{'path'});
+            my $path_len = mbswidth($path);
+            $max_len = $path_len > $max_len ? $path_len : $max_len;
+            $path_len = &get_max_path_len($item);
+            $max_len = $path_len > $max_len ? $path_len : $max_len;
+        }
+    }
+
+    return $max_len;
+}
+
+################################################################################
+# get max file name character length
+#
+#   INPUT  : files(ref)
+#   OUTPUT : character count
+sub get_max_from_len
+{
+    my $stack = shift;
+    my $items = $stack->{'item'};
+    my $max_len = 0;
+
+    foreach my $item (@$items) {
+        my $file_len = 0;
+        if ($item->{'type'} eq 'directory') {
+            $file_len = &get_max_from_len($item);
+        } elsif ($item->{'type'} eq 'file') {
+            my $file = $item->{'file_from'};
+            $file_len = mbswidth($file);
+        }
+        $max_len = $file_len > $max_len ? $file_len : $max_len;
+    }
+
+    return $max_len;
+}
+
+################################################################################
+# display rename files
+#
+#   INPUT  : files(ref)
+#   OUTPUT : -
+sub display_rename_files
+{
+    my $stack = shift;
+    my $path_len = shift;
+    my $from_len = shift;
+    my $items = $stack->{'item'};
+    my $path = &array2path($stack->{'path'});
+
+    foreach my $item (@$items) {
+        if ($item->{'type'} eq 'directory') {
+            &display_rename_files($item, $path_len, $from_len);
+        } elsif ($item->{'type'} eq 'file') {
+            if (!defined($item->{'file_to'})) { next; }
+            printf("%*s  %*s  %s.%s\n",
+                   $path_len, $path,
+                   $from_len, $item->{'file_from'},
+                   $item->{'file_to'}, $item->{'extention'});
+        }
+    }
+}
+
+sub display_not_rename_files
+{
+    my $stack = shift;
+    my $path_len = shift;
+    my $from_len = shift;
+    my $items = $stack->{'item'};
+    my $path = &array2path($stack->{'path'});
+
+    foreach my $item (@$items) {
+        if ($item->{'type'} eq 'directory') {
+            &display_not_rename_files($item, $path_len, $from_len);
+        } elsif ($item->{'type'} eq 'file') {
+            if (defined($item->{'file_to'})) { next; }
+            printf("%*s  %*s\n",
+                   $path_len, $path,
+                   $from_len, $item->{'file_from'});
+        }
+    }
 }
 
 ################################################################################
@@ -288,14 +420,20 @@ sub display_rename
 #   OUTPUT : -
 sub rename_files
 {
-    my $obj = shift;
+    my $stack = shift;
+    my $items = $stack->{'item'};
+    my $path = &array2path($stack->{'path'});
 
-    foreach my $file (@$obj) {
-        if (!defined($file->{'file_to'})) { next; }
-        my $from = $file->{'path'} . '/' . $file->{'file_from'};
-        my $to   = $file->{'path'} . '/' . $file->{'file_to'} . '.' . $file->{'type'};
-        print("move: $from -> $to\n");
-        move($from, $to) or die "[ERROR] can't move: $from -> $to\n";
+    foreach my $item (@$items) {
+        if ($item->{'type'} eq 'directory') {
+            &rename_files($item);
+        } elsif ($item->{'type'} eq 'file') {
+            if (!defined($item->{'file_to'})) { next; }
+            my $from = $path . '/' . $item->{'file_from'};
+            my $to   = $path . '/' . $item->{'file_to'} . '.' . $item->{'extention'};
+            print("move: $from -> $to\n");
+            move($from, $to) or die "[ERROR] can't move: $from -> $to\n";
+        }
     }
 }
 
