@@ -218,7 +218,9 @@ sub check_items
         }
         &make_file_name($item, $path);
         if (defined($item->{'file_to'}) && $insert) {
-            $item->{'file_to'} .= '_' . $item->{'file_from'};
+            my $from = $item->{'file_from'};
+            $from =~ s/^[\d-]+_[\d-]+_*//; # 日付け情報が含まれている場合は削除
+            $item->{'file_to'} .= '_' . $from;
             $item->{'file_to'} =~ s/\.[^\.]+$//; # rename時に拡張子を付与するので削除しておく
         }
     }
