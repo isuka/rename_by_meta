@@ -32,16 +32,19 @@ use Text::CharWidth 'mbswidth';
 
 exit &main();
 
+# command options
+my $help;
+my $dry_run;
+my $insert;
+my $rename_dir;
+my $yes;
+
 sub main
 {
-    my $help;
-    my $dry_run;
-    my $yes;
-    my $rename_dir;
-
     GetOptions(
         'help' => \$help,
         'dry-run' => \$dry_run,
+        'insert' => \$insert,
         'rename-dir' => \$rename_dir,
         'yes' => \$yes,
         );
@@ -214,6 +217,10 @@ sub check_items
             next;
         }
         &make_file_name($item, $path);
+        if (defined($item->{'file_to'}) && $insert) {
+            $item->{'file_to'} .= '_' . $item->{'file_from'};
+            $item->{'file_to'} =~ s/\.[^\.]+$//; # rename時に拡張子を付与するので削除しておく
+        }
     }
 }
 

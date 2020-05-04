@@ -22,6 +22,7 @@ The following modules are required.
     OPTIONS: 
       -h, --help         : this message. 
       -d, --dry-run      : print result, but not execute rename.
+      -i, --insert       : add the shooting date to the beginning of the file name.
       -r, --rename-dir   : rename directory, too.
       -y, --yes          : always yes. 
 
