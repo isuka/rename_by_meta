@@ -9,12 +9,15 @@ use Getopt::Long 'GetOptions';
 use Image::ExifTool;
 use Text::CharWidth 'mbswidth';
 
-use Data::Dumper::AutoEncode;
+#use Data::Dumper::AutoEncode;
 
 # OBJECTS
 #   %path_stack {
 #     'type' => 'directory'
 #     'path' => folder path list
+#     'start' => first shooting date in 'item'(work data for 'directory_to')
+#     'end'   => last shooting date in 'item'(work data for 'directory_to')
+#     'directory_to' => rename directory name
 #     'item' => file or directory list
 #                 file      : file object
 #                 directory : path stack
@@ -34,10 +37,12 @@ sub main
     my $help;
     my $dry_run;
     my $yes;
+    my $rename_dir;
 
     GetOptions(
         'help' => \$help,
         'dry-run' => \$dry_run,
+        'rename-dir' => \$rename_dir,
         'yes' => \$yes,
         );
     my $path = shift(@ARGV);
@@ -55,9 +60,15 @@ sub main
 
         # ファイルタイプとプロパティチェック
         &check_items($stack);
+        if ($rename_dir) {
+            &check_directorys($stack);
+        }
 
         # リネーム予定を表示
-        &display_rename($stack);
+        &display_rename_files($stack);
+        if ($rename_dir) {
+            &display_rename_directorys($stack);
+        }
 
         # ファイルごとにリネーム処理
         if ($dry_run) {
@@ -74,6 +85,9 @@ sub main
                 }
             }
             &rename_files($stack);
+            if ($rename_dir) {
+                &rename_directorys($stack);
+            }
         }
     }
 
@@ -102,7 +116,6 @@ OPTIONS:
 EOS
 
     print $text . "\n";
-    return;
 }
 
 ################################################################################
@@ -202,8 +215,41 @@ sub check_items
         }
         &make_file_name($item, $path);
     }
+}
 
-    return;
+sub check_directorys
+{
+    my $stack = shift;
+    my $path_len = shift;
+    my $items = $stack->{'item'};
+    $stack->{'start'} = '99991231';
+    $stack->{'end'} = '00000101';
+
+    foreach my $item (@$items) {
+        if ($item->{'type'} eq 'directory') {
+            &check_directorys($item, $path_len);
+            $stack->{'start'} = $item->{'start'} < $stack->{'start'} ? $item->{'start'} : $stack->{'start'};
+            $stack->{'end'}   = $item->{'end'} > $stack->{'end'} ? $item->{'end'} : $stack->{'end'};
+        } elsif ($item->{'type'} eq 'file') {
+            if (!defined($item->{'file_to'})) { next; }
+            # ファイル名から日付け情報を取得
+            my $date = $item->{'file_to'};
+            $date =~ s/_.*$//;
+            $date =~ s/-//g;
+            $stack->{'start'} = $date < $stack->{'start'} ? $date : $stack->{'start'};
+            $stack->{'end'} = $date > $stack->{'end'} ? $date : $stack->{'end'};
+        }
+    }
+
+    
+    my $path = &array2path($stack->{'path'});
+    my $dir = ${$stack->{'path'}}[$#{$stack->{'path'}}];
+    if ($path =~ s/\/[^\/]+$/\//) {
+        $dir =~ s/^\d+-\d+_*//; # pathに日付け情報が含まれている場合は削除
+        $stack->{'directory_to'} = $path . $stack->{'start'} . '-' . $stack->{'end'} . '_' . $dir;
+    } else {
+        $stack->{'directory_to'} = $dir;
+    }
 }
 
 ################################################################################
@@ -230,8 +276,6 @@ sub make_file_name
     if (defined($obj->{'file_to'})) { return; }
     $obj->{'file_to'} = &mcd2fname($exif);
     if (defined($obj->{'file_to'})) { return; }
-
-    return;
 }
 
 ################################################################################
@@ -294,12 +338,9 @@ sub mcd2fname
 #
 #   INPUT  : file object
 #   OUTPUT : -
-sub display_rename
+sub display_rename_files
 {
     my $stack = shift;
-    my $obj; # DEBUG
-
-    # fromの最長文字列を調査
     my $path_len = &get_max_path_len($stack);
     my $from_len = &get_max_from_len($stack);
 
@@ -307,15 +348,26 @@ sub display_rename
     $from_len *= -1; # 左寄せのため負数にする
     print("---- RENAME FILES ----\n");
     printf("%*s  %*s  %s\n", $path_len, 'PATH', $from_len, 'FROM', 'TO');
-    &display_rename_files($stack, $path_len, $from_len);
+    &disp_rename_files($stack, $path_len, $from_len);
     print("\n");
 
     print("---- NOT RENAME FILES ----\n");
     printf("%*s  %*s\n", $path_len, 'PATH', $from_len, 'FROM');
-    &display_not_rename_files($stack, $path_len, $from_len);
+    &disp_not_rename_files($stack, $path_len, $from_len);
     print("\n");
+}
 
-    return;
+sub display_rename_directorys
+{
+    my $stack = shift;
+    my $path_len = &get_max_path_len($stack);
+
+    $path_len *= -1; # 左寄せのため負数にする
+
+    print("---- RENAME DIRECTORYS ----\n");
+    printf("%*s  %s\n", $path_len, 'FROM', 'TO');
+    &disp_rename_directorys($stack, $path_len);
+    print("\n");
 }
 
 ################################################################################
@@ -368,11 +420,11 @@ sub get_max_from_len
 }
 
 ################################################################################
-# display rename files
+# display rename files/directorys
 #
 #   INPUT  : files(ref)
 #   OUTPUT : -
-sub display_rename_files
+sub disp_rename_files
 {
     my $stack = shift;
     my $path_len = shift;
@@ -382,7 +434,7 @@ sub display_rename_files
 
     foreach my $item (@$items) {
         if ($item->{'type'} eq 'directory') {
-            &display_rename_files($item, $path_len, $from_len);
+            &disp_rename_files($item, $path_len, $from_len);
         } elsif ($item->{'type'} eq 'file') {
             if (!defined($item->{'file_to'})) { next; }
             printf("%*s  %*s  %s.%s\n",
@@ -393,7 +445,7 @@ sub display_rename_files
     }
 }
 
-sub display_not_rename_files
+sub disp_not_rename_files
 {
     my $stack = shift;
     my $path_len = shift;
@@ -403,7 +455,7 @@ sub display_not_rename_files
 
     foreach my $item (@$items) {
         if ($item->{'type'} eq 'directory') {
-            &display_not_rename_files($item, $path_len, $from_len);
+            &disp_not_rename_files($item, $path_len, $from_len);
         } elsif ($item->{'type'} eq 'file') {
             if (defined($item->{'file_to'})) { next; }
             printf("%*s  %*s\n",
@@ -411,6 +463,24 @@ sub display_not_rename_files
                    $from_len, $item->{'file_from'});
         }
     }
+}
+
+sub disp_rename_directorys
+{
+    my $stack = shift;
+    my $path_len = shift;
+    my $items = $stack->{'item'};
+    my $path = &array2path($stack->{'path'});
+    $stack->{'start'} = '99991231';
+    $stack->{'end'} = '00000101';
+
+    foreach my $item (@$items) {
+        if ($item->{'type'} eq 'directory') {
+            &disp_rename_directorys($item, $path_len);
+        }
+    }
+
+    printf("%*s %s\n", $path_len, $path, $stack->{'directory_to'});
 }
 
 ################################################################################
@@ -431,10 +501,28 @@ sub rename_files
             if (!defined($item->{'file_to'})) { next; }
             my $from = $path . '/' . $item->{'file_from'};
             my $to   = $path . '/' . $item->{'file_to'} . '.' . $item->{'extention'};
-            print("move: $from -> $to\n");
+            print("file move: $from -> $to\n");
             move($from, $to) or die "[ERROR] can't move: $from -> $to\n";
         }
     }
+}
+
+sub rename_directorys
+{
+    my $stack = shift;
+    my $items = $stack->{'item'};
+    my $path = &array2path($stack->{'path'});
+
+    foreach my $item (@$items) {
+        if ($item->{'type'} eq 'directory') {
+            &rename_directorys($item);
+        }
+    }
+
+    my $from = $path;
+    my $to   = $stack->{'directory_to'};
+    print("directory move: $from -> $to\n");
+    move($from, $to) or die "[ERROR] can't move: $from -> $to\n";
 }
 
 exit 0;
